@@ -10,18 +10,94 @@ import { extractCode, normalizeVideo } from "./normalize";
 const AVDB_BASE = "https://avdbapi.com/api.php/provide1/vod";
 
 // ---------- live AVDB ----------
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function avdbFetch(params: Record<string, string | number | undefined>): Promise<any> {
+// Browser-like headers: AVDB (behind Cloudflare) can answer non-browser
+// clients with a challenge/empty body instead of the JSON catalogue.
+const AVDB_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  Referer: "https://avdbapi.com/",
+};
+
+interface AvdbResult {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
+  body: string;
+  status: number;
+  parseError: boolean;
+}
+
+// Reads the body as text first, then JSON.parse — so a non-JSON or empty
+// response can be logged with a snippet instead of failing silently.
+async function avdbFetchRaw(
+  params: Record<string, string | number | undefined>
+): Promise<AvdbResult> {
   const u = new URL(AVDB_BASE);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
   }
   const res = await fetch(u.toString(), {
-    headers: { "User-Agent": "javenglish-avdb-site/1.0", Accept: "application/json" },
+    headers: AVDB_HEADERS,
     cache: "no-store",
+    signal: AbortSignal.timeout(10000),
   });
+  const body = await res.text();
   if (!res.ok) throw new Error(`AVDB HTTP ${res.status}`);
-  return res.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let data: any = null;
+  let parseError = false;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    parseError = true;
+  }
+  return { data, body, status: res.status, parseError };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function avdbFetch(params: Record<string, string | number | undefined>): Promise<any> {
+  const { data, body, parseError } = await avdbFetchRaw(params);
+  if (parseError) {
+    console.error(`AVDB_EMPTY non-JSON response body: ${body.slice(0, 200)}`);
+    throw new Error("AVDB response was not JSON");
+  }
+  return data;
+}
+
+// Diagnostic probe used by /api/avdb-check: one videolist request made
+// exactly the way avdbFetch makes it, reported raw.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function probeAvdb(): Promise<Record<string, any>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const out: Record<string, any> = { ok: false, listLength: 0 };
+  try {
+    const { data, body, status, parseError } = await avdbFetchRaw({
+      ac: "videolist",
+      pg: 1,
+      pagesize: 2,
+      t: 7,
+    });
+    out.httpStatus = status;
+    if (parseError) {
+      out.bodySnippet = body.slice(0, 300);
+      return out;
+    }
+    out.ok = true;
+    out.code = data?.code;
+    out.msg = data?.msg;
+    out.total = data?.total;
+    const list = Array.isArray(data?.list) ? data.list : [];
+    out.listLength = list.length;
+    if (list.length) {
+      out.firstId = list[0]?.vod_id;
+      out.firstName = list[0]?.vod_name;
+    }
+    return out;
+  } catch (e) {
+    out.error = e instanceof Error ? e.message : String(e);
+    return out;
+  }
 }
 
 interface ListOpts {
@@ -32,8 +108,25 @@ interface ListOpts {
 }
 
 async function liveList({ page = 1, pagesize = PAGE_SIZE, typeId, search }: ListOpts): Promise<VideoPage> {
-  const data = await avdbFetch({ ac: "videolist", pg: page, pagesize, t: typeId, wd: search });
-  const videos = (Array.isArray(data.list) ? data.list : [])
+  const params = { ac: "videolist", pg: page, pagesize, t: typeId, wd: search };
+  let { data, body } = await avdbFetchRaw(params);
+  if (!Array.isArray(data?.list) || data.list.length === 0) {
+    // An empty/missing list from AVDB is how the "No videos found" bug
+    // presented on Netlify — log the raw top-level fields and retry once
+    // before giving up, so the real cause is visible in the function logs.
+    console.error(
+      `AVDB_EMPTY code=${data?.code} msg=${data?.msg} total=${data?.total} ` +
+        `pagecount=${data?.pagecount} body=${body.slice(0, 200)}`
+    );
+    ({ data, body } = await avdbFetchRaw(params));
+    if (!Array.isArray(data?.list) || data.list.length === 0) {
+      console.error(
+        `AVDB_EMPTY retry code=${data?.code} msg=${data?.msg} total=${data?.total} ` +
+          `pagecount=${data?.pagecount} body=${body.slice(0, 200)}`
+      );
+    }
+  }
+  const videos = (Array.isArray(data?.list) ? data.list : [])
     .map(normalizeVideo)
     .filter((v: Video | null): v is Video => !!v);
   return {
