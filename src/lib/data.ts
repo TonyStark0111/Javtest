@@ -229,3 +229,81 @@ export async function getRelated(video: Video, limit = 12): Promise<Video[]> {
   const res = await getVideos({ page: 1, pagesize: limit + 1, typeId: video.type?.id || undefined });
   return res.videos.filter((v) => v.slug !== video.slug).slice(0, limit);
 }
+
+// ---------- Actress / Studio index ----------
+// Built from the site's OWN backend data (same source as every other page):
+// exact counts from Mongo when configured; in live mode, names are counted
+// over a scan of the newest AVDB catalogue pages and cached for 15 minutes.
+export interface NameCount {
+  name: string;
+  count: number;
+}
+
+let nameIndexCache: { at: number; actresses: NameCount[]; studios: NameCount[] } | null = null;
+const NAME_INDEX_TTL = 15 * 60 * 1000;
+const JUNK_ACTORS = new Set([
+  "japanese cast", "amateur model", "voice cast", "cast", "unknown", "n/a", "japanese", "amateur",
+]);
+
+function toNameCounts(map: Map<string, number>): NameCount[] {
+  return Array.from(map.entries())
+    .map(([name, count]) => ({ name, count }))
+    .filter((x) => x.name)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+export async function getNameIndex(): Promise<{ actresses: NameCount[]; studios: NameCount[] }> {
+  if (nameIndexCache && Date.now() - nameIndexCache.at < NAME_INDEX_TTL) return nameIndexCache;
+
+  const col = await getVideosCollection();
+  if (col) {
+    const [actAgg, stuAgg] = await Promise.all([
+      col
+        .aggregate([
+          { $unwind: "$actresses" },
+          { $group: { _id: "$actresses", count: { $sum: 1 } } },
+          { $sort: { count: -1, _id: 1 } },
+        ])
+        .toArray(),
+      col
+        .aggregate([
+          { $match: { studio: { $nin: ["", null] } } },
+          { $group: { _id: "$studio", count: { $sum: 1 } } },
+          { $sort: { count: -1, _id: 1 } },
+        ])
+        .toArray(),
+    ]);
+    const out = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      actresses: actAgg.map((r: any) => ({ name: String(r._id), count: Number(r.count) || 0 })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      studios: stuAgg.map((r: any) => ({ name: String(r._id), count: Number(r.count) || 0 })),
+    };
+    nameIndexCache = { at: Date.now(), ...out };
+    return out;
+  }
+
+  // Live AVDB scan: newest English-subtitle catalogue pages (the site's main
+  // catalogue — its actor field carries proper actress names, unlike the
+  // amateur/hentai types where it holds junk like "Japanese Cast").
+  const actressMap = new Map<string, number>();
+  const studioMap = new Map<string, number>();
+  const pages = await Promise.all(
+    [1, 2, 3, 4, 5, 6, 7, 8].map((pg) =>
+      liveList({ page: pg, pagesize: 100, typeId: 7 }).catch(() => ({ videos: [] as Video[] }))
+    )
+  );
+  for (const p of pages) {
+    for (const v of p.videos) {
+      for (const a of v.actresses || []) {
+        // AVDB's actor field sometimes holds generic placeholders, not names.
+        if (JUNK_ACTORS.has(a.trim().toLowerCase())) continue;
+        actressMap.set(a, (actressMap.get(a) || 0) + 1);
+      }
+      if (v.studio) studioMap.set(v.studio, (studioMap.get(v.studio) || 0) + 1);
+    }
+  }
+  const out = { actresses: toNameCounts(actressMap), studios: toNameCounts(studioMap) };
+  if (out.actresses.length || out.studios.length) nameIndexCache = { at: Date.now(), ...out };
+  return out;
+}

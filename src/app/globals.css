@@ -96,6 +96,28 @@ a:hover { text-decoration: underline; }
 .card-studio { color: var(--violet-light); font-weight: 700; }
 .empty { color: #9a9a9a; padding: 24px 0; }
 
+/* actress / studio index */
+.index-search { display: flex; height: 44px; max-width: 520px; margin: 0 0 16px; }
+.index-search input {
+  flex: 1; min-width: 0; padding: 0 14px; border: 1px solid #333; border-right: 0; border-radius: 3px 0 0 3px;
+  font-size: 15px; outline: none; background: #1f1f1f; color: #fff;
+}
+.index-search input::placeholder { color: #8a8a8a; }
+.index-search button {
+  width: 56px; flex: none; border: 0; border-radius: 0 3px 3px 0; background: var(--violet); color: #fff;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.name-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 640px) { .name-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 960px) { .name-grid { grid-template-columns: repeat(4, 1fr); } }
+.name-card {
+  display: flex; flex-direction: column; gap: 2px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 13px 14px;
+}
+.name-card:hover { text-decoration: none; background: var(--panel-2); border-color: var(--violet); }
+.name-card-name { color: #fff; font-weight: 800; font-size: 15px; line-height: 1.3; }
+.name-card-count { color: var(--violet-light); font-size: 12.5px; font-weight: 700; }
+
 /* pagination */
 .pagination { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 26px; }
 .pagination a, .pagination span {

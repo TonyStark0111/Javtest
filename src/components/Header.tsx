@@ -6,16 +6,14 @@ import { SITE_NAME } from "@/lib/types";
 
 // Menu exactly as javenglish.cc (screenshot, 28 Nov 2026):
 // Home / NEW RELEASES / VIDEOS / CHANNELS / ENGLISH SUBTITLE / ACTRESS / STUDIOS / CATEGORIES
-// Labels link to the closest existing XJAV routes (no actress/studio index pages exist yet,
-// so those two open Search, where actress and studio names are searchable).
 const NAV: { label: string; href: string; icon?: "home" | "star" }[] = [
   { label: "Home", href: "/", icon: "home" },
   { label: "NEW RELEASES", href: "/" },
   { label: "VIDEOS", href: "/category/7" },
   { label: "CHANNELS", href: "/category/1" },
   { label: "ENGLISH SUBTITLE", href: "/category/7" },
-  { label: "ACTRESS", href: "/search", icon: "star" },
-  { label: "STUDIOS", href: "/search" },
+  { label: "ACTRESS", href: "/actress", icon: "star" },
+  { label: "STUDIOS", href: "/studio" },
   { label: "CATEGORIES", href: "/category/2" },
 ];
 
