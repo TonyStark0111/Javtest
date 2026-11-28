@@ -19,7 +19,7 @@ export default async function HomePage({ searchParams }: { searchParams: { page?
     <>
       <Link href="/engsub" className="collection-banner">
         <span className="collection-banner-title">English Sub Collection</span>
-        <span className="collection-banner-sub">11,000+ videos — 5 servers per video »</span>
+        <span className="collection-banner-sub">8,000+ English-sub videos — 5 servers per video »</span>
       </Link>
       <h1 className="page-title">Latest English Subtitled JAV</h1>
       <VideoGrid videos={res.videos} />

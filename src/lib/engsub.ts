@@ -93,12 +93,38 @@ interface WpListResult extends VideoPage {
   base: string;
 }
 
-async function wpFetchPosts(params: Record<string, string | number>): Promise<{ posts: unknown[]; total: number; pagecount: number; base: string }> {
+// The network's catalogue also holds older non-subbed posts. English-sub
+// videos are exactly the ones in their "Hardsub" category — resolve its ID
+// per base (mirrors are separate installs) and filter every query by it.
+const hardsubIdCache = new Map<string, number | null>();
+
+async function resolveHardsubId(base: string): Promise<number | null> {
+  if (hardsubIdCache.has(base)) return hardsubIdCache.get(base) ?? null;
+  let id: number | null = null;
+  try {
+    const res = await fetch(`${base}/wp-json/wp/v2/categories?slug=hardsub&_fields=id`, {
+      headers: HEADERS, cache: "no-store", signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const arr = await res.json();
+      if (Array.isArray(arr) && arr[0]?.id) id = Number(arr[0].id);
+    }
+  } catch { /* leave null: fall back to unfiltered for this base */ }
+  hardsubIdCache.set(base, id);
+  return id;
+}
+
+async function wpFetchPosts(
+  params: Record<string, string | number>,
+  filterSub = false
+): Promise<{ posts: unknown[]; total: number; pagecount: number; base: string; hardsubId: number | null }> {
   let lastErr: unknown = null;
   for (const base of ENGSUB_BASES) {
     try {
+      const hardsubId = filterSub ? await resolveHardsubId(base) : null;
       const u = new URL(`${base}/wp-json/wp/v2/posts`);
       for (const [k, v] of Object.entries(params)) u.searchParams.set(k, String(v));
+      if (hardsubId) u.searchParams.set("categories", String(hardsubId));
       const res = await fetch(u.toString(), { headers: HEADERS, cache: "no-store", signal: AbortSignal.timeout(12000) });
       if (!res.ok) throw new Error(`WP HTTP ${res.status}`);
       const posts = await res.json();
@@ -108,6 +134,7 @@ async function wpFetchPosts(params: Record<string, string | number>): Promise<{ 
         total: Number(res.headers.get("x-wp-total")) || posts.length,
         pagecount: Number(res.headers.get("x-wp-totalpages")) || 1,
         base,
+        hardsubId,
       };
     } catch (e) {
       lastErr = e;
@@ -121,7 +148,7 @@ export async function getEngsubVideos(opts: { page?: number; pagesize?: number; 
   const pagesize = Math.min(100, Math.max(1, opts.pagesize || PAGE_SIZE));
   const params: Record<string, string | number> = { page, per_page: pagesize, _embed: 1 };
   if (opts.search) params.search = opts.search;
-  const { posts, total, pagecount, base } = await wpFetchPosts(params);
+  const { posts, total, pagecount, base } = await wpFetchPosts(params, true);
   const videos = posts.map(normalizeWpPost).filter((v: Video | null): v is Video => !!v);
   return { videos, total, page, pagecount, base };
 }
@@ -147,9 +174,17 @@ const sourceCache = new Map<string, { at: number; sources: PlaySource[] }>();
 const SOURCE_TTL = 30 * 60 * 1000;
 
 export async function getEngsubVideo(slug: string): Promise<Video | null> {
-  const { posts, base } = await wpFetchPosts({ slug, _embed: 1 }).catch(() => ({ posts: [] as unknown[], base: "" }));
+  const { posts, base, hardsubId } = await wpFetchPosts({ slug, _embed: 1 }, true).catch(
+    () => ({ posts: [] as unknown[], base: "", hardsubId: null as number | null })
+  );
   const post = posts[0];
   if (!post) return null;
+  // English-sub only: if this base's Hardsub category is known and the post
+  // is not in it, the title is not part of the collection.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const catIds: number[] = Array.isArray((post as any).categories) ? (post as any).categories.map(Number) : [];
+  const knownId = hardsubId ?? (base ? await resolveHardsubId(base) : null);
+  if (knownId && catIds.length && !catIds.includes(knownId)) return null;
   const video = normalizeWpPost(post);
   if (!video) return null;
 
@@ -178,7 +213,7 @@ export async function getEngsubVideo(slug: string): Promise<Video | null> {
 }
 
 export async function getEngsubRelated(video: Video, limit = 12): Promise<Video[]> {
-  const res = await getEngsubVideos({ page: 1, pagesize: limit + 6, search: video.studio || undefined }).catch(
+  const res = await getEngsubVideos({ page: 1, pagesize: limit + 6 }).catch(
     () => ({ videos: [] as Video[] })
   );
   return res.videos.filter((v) => v.slug !== video.slug).slice(0, limit);
