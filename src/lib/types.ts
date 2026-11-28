@@ -68,7 +68,8 @@ export function displayTitle(v: Video): string {
     t = t.slice(v.code.length).replace(/^[\s\-—]+/, "").trim();
   }
   const label = v.type?.id === 7 ? "Eng Sub" : v.type?.name || "";
-  return v.code ? `${v.code}${label ? ` - ${label}` : ""} - ${t}` : t;
+  // javenglish.cc format (screenshot): "ALDN-538 Eng Sub. A stepmother's first..."
+  return v.code ? `${v.code}${label ? ` ${label}.` : ""} ${t}` : t;
 }
 export function isStreamUrl(url: string): boolean {
   return /\.m3u8($|\?)/i.test(url || "") || /\.mp4($|\?)/i.test(url || "");
